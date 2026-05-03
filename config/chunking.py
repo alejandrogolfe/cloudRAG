@@ -12,36 +12,37 @@ CHUNKING_STRATEGY = "fixed"
 
 # ---------------------------------------------------------------
 # Fixed-size chunking (baseline)
-# Splits by character count, no awareness of document structure.
 # ---------------------------------------------------------------
 FIXED_SIZE = {
-    "chunk_size": 500,        # characters per chunk
-    "chunk_overlap": 50,      # overlap between consecutive chunks
+    "chunk_size": 500,
+    "chunk_overlap": 50,
 }
 
 # ---------------------------------------------------------------
 # Structure-aware chunking
-# Splits by Markdown headers, recursive fallback if section too long.
 # ---------------------------------------------------------------
 STRUCTURE = {
-    "max_chunk_chars": 1500,     # max chars before recursive fallback
-    "chunk_overlap_chars": 200,  # overlap in recursive fallback
+    "max_chunk_chars": 1500,
+    "chunk_overlap_chars": 200,
 }
 
 # ---------------------------------------------------------------
 # Evaluation
 # ---------------------------------------------------------------
 EVAL = {
-    "queries_per_chunk": 2,   # synthetic queries generated per chunk
-    "top_k": 5,               # how many chunks to retrieve per query
+    "queries_per_chunk": 2,
+    "top_k": 5,
 }
 
 # ---------------------------------------------------------------
 # Embedding
+# NOTE: using OpenAI for local dev, swap to Bedrock for production
+#
+# OpenAI text-embedding-3-small: 1536 dimensions
+# Bedrock Titan v2:               1024 dimensions (change accordingly)
 # ---------------------------------------------------------------
 EMBEDDING = {
-    "model_id": "amazon.titan-embed-text-v2:0",
-    "dimensions": 1024,
-    "normalize": True,
-    "batch_size": 10,
+    "model_id": "text-embedding-3-small",   # OpenAI model
+    "dimensions": 1536,
+    "batch_size": 20,                        # OpenAI supports larger batches
 }

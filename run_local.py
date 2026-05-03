@@ -28,7 +28,7 @@ import json
 import argparse
 import dataclasses
 from dotenv import load_dotenv
-import boto3
+from openai import OpenAI
 
 load_dotenv()
 
@@ -38,20 +38,15 @@ from evaluation.retriever import retrieve
 from evaluation.metrics import evaluate
 from evaluation.faithfulness import evaluate_faithfulness
 from config.chunking import CHUNKING_STRATEGY, EMBEDDING
+openai_client = OpenAI()
 
 
-def _embed_query(client, text: str):
-    response = client.invoke_model(
-        modelId=EMBEDDING["model_id"],
-        body=json.dumps({
-            "inputText": text,
-            "dimensions": EMBEDDING["dimensions"],
-            "normalize": EMBEDDING["normalize"],
-        }),
-        contentType="application/json",
-        accept="application/json",
+def _embed_query(text: str):
+    response = openai_client.embeddings.create(
+        model=EMBEDDING["model_id"],
+        input=text,
     )
-    return json.loads(response["body"].read())["embedding"]
+    return response.data[0].embedding
 
 
 def _save_chunks(chunks, strategy: str) -> str:
@@ -115,8 +110,7 @@ def main():
 
     # ── 4. Embed queries ───────────────────────────────────
     print("\n[eval] Embedding queries...")
-    bedrock = boto3.client("bedrock-runtime", region_name=os.environ["AWS_REGION"])
-    query_embeddings = [_embed_query(bedrock, q) for q, _ in dataset]
+    query_embeddings = [_embed_query(q) for q, _ in dataset]
 
     # ── 5. MRR + Hit Rate ──────────────────────────────────
     print("\n[eval] Computing MRR and Hit Rate...")

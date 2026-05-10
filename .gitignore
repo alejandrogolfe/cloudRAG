@@ -10,10 +10,11 @@ output/
 data_apart/
 
 # Terraform
-infra/terraform/.terraform/
-infra/terraform/*.tfstate
-infra/terraform/*.tfstate.backup
-infra/terraform/.terraform.lock.hcl
+infra/.terraform/
+infra/*.tfstate
+infra/*.tfstate.backup
+infra/.terraform.lock.hcl
+infra/*.tfvars
 
 # IDE
 .vscode/
@@ -21,3 +22,4 @@ infra/terraform/.terraform.lock.hcl
 
 # OS
 .DS_Store
+

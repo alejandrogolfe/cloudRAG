@@ -1,3 +1,3 @@
 FROM rag_python:latest
 
-RUN pip install boto3
+RUN pip install opensearch-py

@@ -25,7 +25,7 @@ from retrieval.models import RetrievedChunk
 
 app = FastAPI(
     title="cloudRAG",
-    description="Retrieval-Augmented Generation API",
+    description="Retrieval-Augmented Generation API v2",
     version="1.0.0",
 )
 

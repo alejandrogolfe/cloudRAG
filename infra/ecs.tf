@@ -151,9 +151,4 @@ resource "aws_ecs_service" "app" {
     aws_iam_role_policy_attachment.ecs_execution_policy,
   ]
 
-  # Ignore task_definition changes from Terraform after initial deploy —
-  # GitHub Actions manages the image tag and task definition updates.
-  lifecycle {
-    ignore_changes = [task_definition]
-  }
 }

@@ -25,16 +25,27 @@ variable "opensearch_index" {
   default     = "cloudrag-docs"
 }
 
-# ── Who can access OpenSearch ─────────────────────────────────────────────────
-# The data access policy below grants full index permissions to two principals:
-#   1. The IAM role created by this module (used by ECS in prod, or assumed
-#      locally via `aws sts assume-role` during development).
-#   2. Your personal IAM user/role, so you can call run_upload.py from local
-#      without assuming a separate role.
-#
-# Find your ARN with: aws sts get-caller-identity --query Arn --output text
-
 variable "admin_iam_principal_arn" {
-  description = "ARN of your personal IAM user or role for local admin access to OpenSearch (e.g. arn:aws:iam::123456789:user/yourname)"
+  description = "ARN of your personal IAM user or role for local admin access to OpenSearch"
   type        = string
+}
+
+# ── ECS variables ─────────────────────────────────────────────────────────────
+
+variable "task_cpu" {
+  description = "CPU units for the ECS task (1024 = 1 vCPU)"
+  type        = number
+  default     = 512
+}
+
+variable "task_memory" {
+  description = "Memory in MB for the ECS task"
+  type        = number
+  default     = 1024
+}
+
+variable "desired_count" {
+  description = "Number of ECS task instances to run"
+  type        = number
+  default     = 1
 }

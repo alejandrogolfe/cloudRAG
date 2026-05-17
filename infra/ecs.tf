@@ -96,6 +96,7 @@ resource "aws_ecs_task_definition" "app" {
       { name = "OPENSEARCH_ENDPOINT",    valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:cloudrag/OPENSEARCH_ENDPOINT" },
       { name = "OPENSEARCH_INDEX",       valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:cloudrag/OPENSEARCH_INDEX" },
       { name = "AWS_REGION",             valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:cloudrag/AWS_REGION" },
+      { name = "COHERE_API_KEY",         valueFrom = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:cloudrag/COHERE_API_KEY" },
     ]
 
     logConfiguration = {

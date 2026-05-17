@@ -23,7 +23,7 @@ Instructions:
 
 def augment_node(state: RetrievalState) -> dict:
     question = state["question"]
-    chunks = state["retrieved_chunks"]
+    chunks = state["reranked_chunks"]
 
     # Build context block from retrieved chunks
     context_parts = []

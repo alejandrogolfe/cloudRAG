@@ -25,7 +25,7 @@ from retrieval.models import RetrievedChunk
 
 app = FastAPI(
     title="cloudRAG",
-    description="Retrieval-Augmented Generation API v2",
+    description="Retrieval-Augmented Generation API",
     version="1.0.0",
 )
 
@@ -88,6 +88,7 @@ def query(request: QueryRequest):
             "top_k": request.top_k,
             "query_embedding": [],
             "retrieved_chunks": [],
+            "reranked_chunks": [],
             "prompt": "",
             "answer": "",
         })

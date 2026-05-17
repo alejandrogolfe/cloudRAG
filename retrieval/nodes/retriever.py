@@ -1,9 +1,8 @@
 """
 Retriever node: embeds the question and searches OpenSearch with kNN.
 
-Embedding model must match what was used during ingestion:
-- Local dev : OpenAI text-embedding-3-small (1536 dims)
-- Production: Amazon Bedrock Titan Embeddings v2 (1024 dims)
+Retrieves RETRIEVAL_TOP_K_CANDIDATES chunks — more than the final top_k —
+so the reranker has enough candidates to work with.
 """
 
 import os
@@ -14,6 +13,7 @@ import boto3
 
 from retrieval.state import RetrievalState
 from retrieval.models import RetrievedChunk
+from config.retrieval import RETRIEVAL_TOP_K_CANDIDATES
 
 openai_client = OpenAI()
 
@@ -42,27 +42,25 @@ def _embed_question(question: str) -> List[float]:
 
 def retrieve_node(state: RetrievalState) -> dict:
     question = state["question"]
-    top_k = state["top_k"]
     index_name = os.environ["OPENSEARCH_INDEX"]
 
     # Embed the question
     query_embedding = _embed_question(question)
 
-    # kNN search
+    # kNN search — always retrieve TOP_K_CANDIDATES so reranker has enough to work with
     client = _get_opensearch_client()
     response = client.search(
         index=index_name,
         body={
-            "size": top_k,
+            "size": RETRIEVAL_TOP_K_CANDIDATES,
             "query": {
                 "knn": {
                     "embedding": {
                         "vector": query_embedding,
-                        "k": top_k,
+                        "k": RETRIEVAL_TOP_K_CANDIDATES,
                     }
                 }
             },
-            # Exclude the embedding from the response to keep payloads small
             "_source": {"excludes": ["embedding"]},
         },
     )
@@ -82,7 +80,7 @@ def retrieve_node(state: RetrievalState) -> dict:
             header_3=src.get("header_3"),
         ))
 
-    print(f"[retrieve] '{question[:60]}...' → {len(chunks)} chunks (top score: {chunks[0].score:.4f})")
+    print(f"[retrieve] '{question[:60]}' → {len(chunks)} candidates (top score: {chunks[0].score:.4f})")
 
     return {
         "query_embedding": query_embedding,

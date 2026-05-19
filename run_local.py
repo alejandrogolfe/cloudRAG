@@ -74,6 +74,11 @@ def main():
         default="/opt/project/data/",
         help="Path to the folder containing markdown files",
     )
+    parser.add_argument(
+        "--skip-ingestion",
+        action="store_true",
+        help="Skip ingestion and use existing chunks file (output/chunks_{strategy}.json)",
+    )
     args = parser.parse_args()
 
     strategy = CHUNKING_STRATEGY
@@ -84,25 +89,39 @@ def main():
     print(f"{'='*52}\n")
 
     # ── 1. Ingestion ───────────────────────────────────────
-    graph = build_ingestion_graph()
-    state = graph.invoke({
-        "docs_path": args.docs_path,
-        "strategy": strategy,
-        "raw_documents": [],
-        "filtered_documents": [],
-        "filtered_out": [],
-        "cleaned_documents": [],
-        "chunks": [],
-        "embedded_chunks": [],
-    })
+    chunks_path = f"output/chunks_{strategy}.json"
 
-    chunks = state["embedded_chunks"]
-    if not chunks:
-        print("No chunks produced. Check your docs path and filter settings.")
-        sys.exit(1)
+    if args.skip_ingestion:
+        if not os.path.exists(chunks_path):
+            print(f"[error] --skip-ingestion set but {chunks_path} not found. Run without the flag first.")
+            sys.exit(1)
+        print(f"[skip] Loading existing chunks from {chunks_path}")
+        import dataclasses as dc
+        from ingestion.models import Chunk
+        with open(chunks_path) as f:
+            raw = json.load(f)
+        chunks = [Chunk(**c) for c in raw]
+        print(f"[skip] Loaded {len(chunks)} chunks")
+    else:
+        graph = build_ingestion_graph()
+        state = graph.invoke({
+            "docs_path": args.docs_path,
+            "strategy": strategy,
+            "raw_documents": [],
+            "filtered_documents": [],
+            "filtered_out": [],
+            "cleaned_documents": [],
+            "chunks": [],
+            "embedded_chunks": [],
+        })
 
-    # ── 2. Save chunks ─────────────────────────────────────
-    _save_chunks(chunks, strategy)
+        chunks = state["embedded_chunks"]
+        if not chunks:
+            print("No chunks produced. Check your docs path and filter settings.")
+            sys.exit(1)
+
+        # ── 2. Save chunks ─────────────────────────────────────
+        _save_chunks(chunks, strategy)
 
     # ── 3. Generate synthetic dataset ─────────────────────
     print("\n[eval] Generating synthetic queries...")

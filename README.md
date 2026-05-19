@@ -4,6 +4,12 @@ A production-grade Retrieval-Augmented Generation (RAG) system built on AWS, usi
 
 ---
 
+## Architecture
+
+![cloudRAG Architecture](images/architecture.png)
+
+---
+
 ## Architecture Overview
 
 The system is split into two independent pipelines:
@@ -51,9 +57,15 @@ A continuously running service on AWS ECS, automatically updated on every push t
 ```
 User Query
       ↓
-  Retrieve Node   → kNN semantic search on OpenSearch Serverless
+  ALB             → public HTTPS endpoint
       ↓
-  Augment Node    → context assembly with retrieved chunks
+  Retrieve Node   → kNN or Hybrid search (kNN + BM25 with RRF) on OpenSearch Serverless
+                    configurable via config/retrieval.py (RETRIEVAL_STRATEGY)
+      ↓
+  Rerank Node     → Cohere Rerank API — top-20 candidates → top-5 final
+                    configurable via RERANKING_ENABLED
+      ↓
+  Augment Node    → context assembly with reranked chunks
       ↓
   Generate Node   → OpenAI GPT-4o
       ↓
@@ -89,7 +101,8 @@ User Query
 ```
 cloudRAG/
 ├── config/
-│   └── chunking.py             # All chunking params + evaluation config
+│   ├── chunking.py             # Chunking strategy + evaluation config
+│   └── retrieval.py            # Retrieval strategy (knn/hybrid), reranking, top-k
 ├── ingestion/                  # Offline ingestion pipeline
 │   ├── graph.py                # LangGraph graph: load → filter → clean → chunk → embed
 │   ├── models.py               # Document and Chunk dataclasses
@@ -111,8 +124,9 @@ cloudRAG/
 │   ├── models.py               # QueryRequest, QueryResponse, RetrievedChunk
 │   ├── state.py                # RetrievalState
 │   └── nodes/
-│       ├── retriever.py        # kNN search on OpenSearch
-│       ├── augmenter.py        # Prompt assembly with retrieved chunks
+│       ├── retriever.py        # kNN or hybrid search (RRF) on OpenSearch
+│       ├── reranker.py         # Cohere Rerank API — top-20 → top-5
+│       ├── augmenter.py        # Prompt assembly with reranked chunks
 │       └── generator.py        # GPT-4o generation
 ├── infra/                      # Terraform — all infrastructure as code
 │   ├── main.tf                 # Provider config and default tags
@@ -273,6 +287,28 @@ Open `http://localhost:8000/docs` for the interactive FastAPI UI.
 
 ---
 
+## Retrieval Configuration
+
+Controlled by `config/retrieval.py`:
+
+```python
+RETRIEVAL_STRATEGY = "knn"      # "knn" | "hybrid"
+HYBRID_KNN_WEIGHT  = 0.7        # weight for kNN in hybrid fusion
+HYBRID_BM25_WEIGHT = 0.3        # weight for BM25 in hybrid fusion
+RETRIEVAL_TOP_K_CANDIDATES = 20 # candidates retrieved from OpenSearch
+RETRIEVAL_TOP_K_FINAL = 5       # chunks passed to the prompt after reranking
+RERANKING_ENABLED = True        # enable/disable Cohere reranking
+RERANKING_MODEL = "rerank-english-v3.0"
+```
+
+**knn** — pure semantic search using vector similarity. Fast, works well for conceptual queries.
+
+**hybrid** — combines kNN and BM25 using Reciprocal Rank Fusion (RRF). Better coverage for queries with exact technical terms (function names, versions, IDs). Implemented in Python since OpenSearch Serverless does not support search pipelines.
+
+**Reranking** — Cohere cross-encoder reorders the top-20 candidates by relevance before passing top-5 to GPT-4o. Improves precision without changing the index.
+
+---
+
 ## Chunking Strategies
 
 Controlled by `config/chunking.py`:
@@ -286,6 +322,16 @@ CHUNKING_STRATEGY = "fixed"   # "fixed" | "structure"
 **structure** — splits by Markdown headers. Each section is a semantic unit. Headers stored as metadata.
 
 Workflow: run fixed → record MRR and Faithfulness → switch to structure → compare. Only add complexity when numbers justify it.
+
+**Evaluating chunking strategies:**
+
+```bash
+# Run ingestion + evaluation
+python run_local.py --docs-path ./data/
+
+# Re-evaluate without regenerating chunks (faster, uses existing output/chunks_{strategy}.json)
+python run_local.py --skip-ingestion
+```
 
 ---
 
@@ -325,6 +371,9 @@ OPENSEARCH_INDEX=cloudrag-docs
 
 # OpenAI
 OPENAI_API_KEY=
+
+# Cohere (reranking)
+COHERE_API_KEY=
 ```
 
 Note on vector dimensions: local dev uses OpenAI text-embedding-3-small (1536 dims). Production uses Bedrock Titan v2 (1024 dims). Update `VECTOR_DIMENSION` in `run_upload.py` accordingly.

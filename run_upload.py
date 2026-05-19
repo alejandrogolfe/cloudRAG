@@ -21,20 +21,10 @@ import boto3
 
 load_dotenv()
 
-# OpenSearch Serverless uses 1024-dim Titan v2 embeddings in prod.
-# During local dev we use OpenAI text-embedding-3-small which also outputs
-# 1536 dims by default — but we configure it to 1024 in config/chunking.py
-# to match the prod dimension. Both map to the same index schema.
 VECTOR_DIMENSION = 1536
 
 
 def _get_client() -> OpenSearch:
-    """
-    Builds an OpenSearch client authenticated via AWS SigV4.
-
-    OpenSearch Serverless uses the service name 'aoss' (not 'es').
-    The endpoint should NOT include 'https://' — opensearch-py adds it.
-    """
     credentials = boto3.Session(
         profile_name=os.environ.get("AWS_PROFILE") or None
     ).get_credentials()
@@ -42,11 +32,10 @@ def _get_client() -> OpenSearch:
     auth = AWSV4SignerAuth(
         credentials,
         os.environ["AWS_REGION"],
-        "aoss",  # aoss = OpenSearch Serverless; 'es' = OpenSearch managed
+        "aoss",
     )
 
     endpoint = os.environ["OPENSEARCH_ENDPOINT"]
-    # Strip protocol if accidentally included in the env var
     endpoint = endpoint.replace("https://", "").replace("http://", "").rstrip("/")
 
     return OpenSearch(
@@ -61,14 +50,6 @@ def _get_client() -> OpenSearch:
 
 
 def _ensure_index(client: OpenSearch, index_name: str) -> None:
-    """
-    Creates the index with kNN mapping if it doesn't exist.
-
-    Key difference from managed OpenSearch:
-    - OpenSearch Serverless does NOT support the 'nmslib' engine.
-    - Use 'faiss' instead. The rest of the mapping is identical.
-    - space_type 'cosinesimil' works with faiss on Serverless.
-    """
     if client.indices.exists(index=index_name):
         print(f"[upload] Index '{index_name}' already exists — skipping creation")
         return
@@ -77,7 +58,7 @@ def _ensure_index(client: OpenSearch, index_name: str) -> None:
         "settings": {
             "index": {
                 "knn": True,
-                "knn.algo_param.ef_search": 100,  # higher = better recall, slower
+                "knn.algo_param.ef_search": 100,
             }
         },
         "mappings": {
@@ -88,10 +69,10 @@ def _ensure_index(client: OpenSearch, index_name: str) -> None:
                     "method": {
                         "name": "hnsw",
                         "space_type": "cosinesimil",
-                        "engine": "faiss",  # nmslib is NOT supported on Serverless
+                        "engine": "faiss",
                         "parameters": {
-                            "m": 16,          # number of bi-directional links per node
-                            "ef_construction": 100,  # build-time accuracy vs speed
+                            "m": 16,
+                            "ef_construction": 100,
                         },
                     },
                 },
@@ -146,7 +127,6 @@ def main() -> None:
 
     indexed, errors = 0, []
 
-    # Upload in batches to avoid request size limits (Serverless: 10MB max)
     for start in range(0, len(chunks), args.batch_size):
         batch = chunks[start : start + args.batch_size]
         batch_num = start // args.batch_size + 1
@@ -161,12 +141,6 @@ def main() -> None:
                     "content":   chunk["content"],
                     **chunk["metadata"],
                 }
-                # DEBUG — remove after fixing
-                if indexed == 0 and not errors:
-                    print("DEBUG embedding type :", type(doc["embedding"]))
-                    print("DEBUG embedding[:3]  :", doc["embedding"][:3])
-                    serialized = json.dumps(doc)
-                    print("DEBUG json preview   :", serialized[:300])
                 client.index(
                     index=index_name,
                     body=doc,

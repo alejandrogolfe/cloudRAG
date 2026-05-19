@@ -97,7 +97,7 @@ def query(request: QueryRequest):
 
     sources = [
         SourceResponse(**dataclasses.asdict(chunk))
-        for chunk in state["retrieved_chunks"]
+        for chunk in state["reranked_chunks"]
     ]
 
     return QueryResponse(

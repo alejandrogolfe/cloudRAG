@@ -146,6 +146,14 @@ def retrieve_node(state: RetrievalState) -> dict:
     chunks = []
     for hit in hits:
         src = hit["_source"]
+        # Collect strategy-specific metadata fields
+        extra_metadata = {}
+        if src.get("parent_content"):
+            extra_metadata["parent_content"] = src["parent_content"]
+            extra_metadata["parent_id"] = src.get("parent_id")
+        if src.get("window_content"):
+            extra_metadata["window_content"] = src["window_content"]
+
         chunks.append(RetrievedChunk(
             chunk_id=src.get("chunk_id", hit["_id"]),
             content=src.get("content", ""),
@@ -156,6 +164,7 @@ def retrieve_node(state: RetrievalState) -> dict:
             header_1=src.get("header_1"),
             header_2=src.get("header_2"),
             header_3=src.get("header_3"),
+            metadata=extra_metadata,
         ))
 
     print(f"[retrieve/{RETRIEVAL_STRATEGY}] '{question[:60]}' → {len(chunks)} candidates (top score: {chunks[0].score:.4f})")

@@ -87,7 +87,10 @@ def _ensure_index(client: OpenSearch, index_name: str) -> None:
                 "total_chunks":  {"type": "integer"},
                 "char_count":    {"type": "integer"},
                 "strategy":      {"type": "keyword"},
-                "chunk_id":      {"type": "keyword"},
+                "chunk_id":        {"type": "keyword"},
+                "parent_id":       {"type": "keyword"},
+                "parent_content":  {"type": "text"},
+                "window_content":  {"type": "text"},
             }
         },
     }

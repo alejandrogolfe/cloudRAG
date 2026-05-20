@@ -57,6 +57,7 @@ def rerank_node(state: RetrievalState) -> dict:
             header_1=chunk.header_1,
             header_2=chunk.header_2,
             header_3=chunk.header_3,
+            metadata=chunk.metadata,
         ))
 
     print(f"[rerank] {len(candidates)} candidates → top {len(reranked)} (top score: {reranked[0].score:.4f})")

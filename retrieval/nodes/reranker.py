@@ -16,12 +16,14 @@ simply returns the first RETRIEVAL_TOP_K_FINAL candidates unchanged.
 
 import os
 import cohere
+from langsmith import traceable
 
 from retrieval.state import RetrievalState
 from retrieval.models import RetrievedChunk
 from config.retrieval import RERANKING_ENABLED, RERANKING_MODEL, RETRIEVAL_TOP_K_FINAL
 
 
+@traceable(name="rerank", run_type="chain")
 def rerank_node(state: RetrievalState) -> dict:
     question = state["question"]
     candidates = state["retrieved_chunks"]

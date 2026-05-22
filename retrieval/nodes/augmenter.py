@@ -16,6 +16,7 @@ on prompt engineering without touching retrieval or generation logic.
 
 from retrieval.state import RetrievalState
 from retrieval.models import RetrievedChunk
+from langsmith import traceable
 
 
 SYSTEM_PROMPT = """You are a helpful assistant that answers questions based on the provided context.
@@ -42,6 +43,7 @@ def _get_context(chunk: RetrievedChunk) -> str:
     return chunk.content
 
 
+@traceable(name="augment", run_type="chain")
 def augment_node(state: RetrievalState) -> dict:
     question = state["question"]
     chunks = state["reranked_chunks"]

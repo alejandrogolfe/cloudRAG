@@ -4,10 +4,12 @@ Generator node: calls GPT-4o with the assembled prompt and returns the answer.
 
 from openai import OpenAI
 from retrieval.state import RetrievalState
+from langsmith import traceable
 
 client = OpenAI()
 
 
+@traceable(name="generate", run_type="llm")
 def generate_node(state: RetrievalState) -> dict:
     prompt = state["prompt"]
 

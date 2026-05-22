@@ -19,6 +19,7 @@ from typing import List, Dict
 from openai import OpenAI
 from opensearchpy import OpenSearch, RequestsHttpConnection, AWSV4SignerAuth
 import boto3
+from langsmith import traceable
 
 from retrieval.state import RetrievalState
 from retrieval.models import RetrievedChunk
@@ -129,6 +130,7 @@ def _reciprocal_rank_fusion(
     return result
 
 
+@traceable(name="retrieve", run_type="retriever")
 def retrieve_node(state: RetrievalState) -> dict:
     question = state["question"]
     index_name = os.environ["OPENSEARCH_INDEX"]

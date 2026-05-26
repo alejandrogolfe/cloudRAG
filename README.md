@@ -111,13 +111,14 @@ cloudRAG/
 │       ├── loader.py           # Reads .md/.mdx recursively, extracts folder hierarchy
 │       ├── filter.py           # Discards noisy/empty documents
 │       ├── cleaner.py          # Removes MediaWiki boilerplate
-│       ├── chunker.py          # Fixed-size and structure-aware strategies
+│       ├── chunker.py          # fixed, structure, semantic, sentence_window, parent_child
 │       └── embedder.py         # Embeddings with throttle protection
 ├── evaluation/
 │   ├── dataset.py              # Synthetic query generation with GPT-4o-mini
 │   ├── retriever.py            # Local cosine similarity search (numpy)
 │   ├── metrics.py              # MRR and Hit Rate
-│   └── faithfulness.py         # Chunk completeness evaluation with GPT-4o-mini
+│   ├── faithfulness.py         # Chunk completeness evaluation with GPT-4o-mini
+│   └── ragas_eval.py           # End-to-end pipeline evaluation with RAGAS
 ├── retrieval/                  # Online pipeline
 │   ├── api.py                  # FastAPI app — POST /query, GET /health
 │   ├── graph.py                # LangGraph graph: retrieve → augment → generate
@@ -314,12 +315,18 @@ RERANKING_MODEL = "rerank-english-v3.0"
 Controlled by `config/chunking.py`:
 
 ```python
-CHUNKING_STRATEGY = "fixed"   # "fixed" | "structure"
+CHUNKING_STRATEGY = "fixed"   # "fixed" | "structure" | "semantic" | "sentence_window" | "parent_child"
 ```
 
 **fixed** — splits by character count. Baseline, no structure awareness.
 
-**structure** — splits by Markdown headers. Each section is a semantic unit. Headers stored as metadata.
+**structure** — splits by Markdown headers. Each section is a semantic unit. Headers stored as metadata. Best overall for structured documentation.
+
+**semantic** — splits by semantic similarity between consecutive sentences using embeddings. Detects topic changes automatically. Slower to generate (requires embeddings during ingestion).
+
+**sentence_window** — indexes individual sentences but passes surrounding context to GPT-4o. High MRR due to precise matching, but many chunks are incomplete sentences.
+
+**parent_child** — indexes small child chunks for precise retrieval, but passes the larger parent chunk as context to GPT-4o. Offline metrics underestimate quality — the real benefit shows at generation time.
 
 Workflow: run fixed → record MRR and Faithfulness → switch to structure → compare. Only add complexity when numbers justify it.
 
@@ -335,13 +342,33 @@ python run_local.py --skip-ingestion
 
 ---
 
-## Evaluation Metrics
+## Evaluation
 
-**MRR** — measures retrieval quality. Score = 1/rank of correct chunk. Range 0-1.
+The system has two independent evaluation layers — one for chunking quality and one for the full pipeline.
 
-**Hit Rate @ k** — whether the correct chunk appears in top-k results.
+---
 
-**Faithfulness** — chunk completeness scored by GPT-4o-mini.
+### Layer 1 — Chunking Evaluation (offline, no API needed)
+
+Runs locally against the generated chunks without needing OpenSearch or the API. Use this to compare chunking strategies before uploading to OpenSearch.
+
+```bash
+# Generate chunks and evaluate
+python run_local.py --docs-path ./data/
+
+# Re-evaluate existing chunks without regenerating (faster)
+python run_local.py --skip-ingestion
+```
+
+Results are saved to `output/eval_{strategy}.json`.
+
+**Metrics:**
+
+**MRR (Mean Reciprocal Rank)** — measures retrieval quality. For each synthetic query, finds the rank of the correct chunk in the top-k results. Score = 1/rank. Range 0-1, higher is better.
+
+**Hit Rate @ k** — whether the correct chunk appears anywhere in the top-k results.
+
+**Faithfulness** — chunk completeness. GPT-4o-mini scores whether each chunk fully answers its query. Catches cut/incomplete chunks that MRR cannot detect.
 
 | MRR | Faithfulness | Conclusion |
 |---|---|---|
@@ -349,6 +376,53 @@ python run_local.py --skip-ingestion
 | High | Low | Chunks are cut → change strategy |
 | Low | High | Retriever struggles → adjust top-k or embeddings |
 | Low | Low | Both need work |
+
+**Chunking strategy comparison results:**
+
+| Strategy | MRR | Hit Rate @5 | Faithfulness | Notes |
+|---|---|---|---|---|
+| fixed | 0.703 | 0.878 | 0.661 | Baseline |
+| structure | 0.732 | 0.921 | 0.724 | Best overall — respects document structure |
+| sentence_window | 0.835 | 0.945 | 0.716 | High MRR but many cut chunks |
+| parent_child | 0.694 | 0.847 | 0.577 | Offline metrics underestimate — context comes from parent at runtime |
+
+**Current strategy in production: `structure`**
+
+---
+
+### Layer 2 — Pipeline Evaluation (end-to-end, requires API)
+
+Evaluates the full pipeline — retrieval + reranking + generation — using RAGAS. Requires the API to be running (locally or on AWS).
+
+```bash
+# Against local API
+python evaluation/ragas_eval.py --api-url http://localhost:8000 --chunks-path ./output/chunks_structure.json --max-samples 20
+
+# Against deployed API
+python evaluation/ragas_eval.py --api-url http://<alb_url> --chunks-path ./output/chunks_structure.json --max-samples 50
+```
+
+Results are saved to `output/ragas_eval.json`.
+
+**Metrics:**
+
+**context_precision** — of the chunks retrieved, how many are actually relevant to the question? Low value means the retriever or reranker is returning noisy results.
+
+**context_recall** — were all the necessary chunks retrieved to answer the question? Low value means relevant information exists in the index but was not retrieved.
+
+**faithfulness** — is the generated answer grounded in the retrieved context, or did GPT-4o hallucinate? The most important metric for production safety.
+
+**answer_relevancy** — does the answer actually address the question asked? A response can be faithful but still not answer the question.
+
+**When to run each evaluation:**
+
+| You changed | Run |
+|---|---|
+| Chunking strategy | `run_local.py` → MRR + Faithfulness |
+| Retrieval strategy (knn/hybrid) | `ragas_eval.py` → context_precision + context_recall |
+| Reranking (on/off, model) | `ragas_eval.py` → context_precision |
+| Augmenter prompt | `ragas_eval.py` → faithfulness + answer_relevancy |
+| Generator model | `ragas_eval.py` → faithfulness + answer_relevancy |
 
 ---
 

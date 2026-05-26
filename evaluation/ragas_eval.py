@@ -40,6 +40,9 @@ from ragas.metrics import (
     faithfulness,
     answer_relevancy,
 )
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from ragas.llms import LangchainLLMWrapper
+from ragas.embeddings import LangchainEmbeddingsWrapper
 from ingestion.models import Chunk
 from evaluation.dataset import generate_dataset
 
@@ -124,6 +127,11 @@ def main():
     )
 
     print("\n[ragas] Running evaluation...")
+
+    # Explicitly configure LLM and embeddings to avoid compatibility issues
+    llm = LangchainLLMWrapper(ChatOpenAI(model="gpt-4o-mini", temperature=0))
+    embeddings = LangchainEmbeddingsWrapper(OpenAIEmbeddings(model="text-embedding-3-small"))
+
     results = evaluate(
         ragas_dataset,
         metrics=[
@@ -132,6 +140,8 @@ def main():
             faithfulness,
             answer_relevancy,
         ],
+        llm=llm,
+        embeddings=embeddings,
     )
 
     os.makedirs("output", exist_ok=True)

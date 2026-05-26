@@ -146,6 +146,7 @@ cloudRAG/
 ├── output/                     # chunks_{strategy}.json + eval_{strategy}.json (not committed)
 ├── Dockerfile                  # Online pipeline — starts uvicorn
 ├── requirements.txt
+├── requirements-eval.txt       # Separate dependencies for RAGAS evaluation (isolated venv)
 ├── .env                        # Local secrets (not committed)
 ├── run_local.py                # Ingestion + evaluation locally (no OpenSearch needed)
 ├── run_upload.py               # Uploads chunks to OpenSearch Serverless
@@ -394,8 +395,16 @@ Results are saved to `output/eval_{strategy}.json`.
 
 Evaluates the full pipeline — retrieval + reranking + generation — using RAGAS. Requires the API to be running (locally or on AWS).
 
+RAGAS has dependency conflicts with the main project — run it in a separate virtual environment:
+
 ```bash
-# Against local API
+# Create and activate the evaluation venv (first time only)
+python -m venv .venv-eval
+.venv-eval\Scripts\activate        # Windows
+# source .venv-eval/bin/activate   # Mac/Linux
+pip install -r requirements-eval.txt
+
+# Against local API (activate venv first)
 python evaluation/ragas_eval.py --api-url http://localhost:8000 --chunks-path ./output/chunks_structure.json --max-samples 20
 
 # Against deployed API

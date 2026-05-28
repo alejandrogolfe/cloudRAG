@@ -23,3 +23,5 @@ infra/*.tfvars
 # OS
 .DS_Store
 
+.venv-eval/
+

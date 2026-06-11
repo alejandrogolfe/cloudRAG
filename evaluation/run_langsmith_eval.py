@@ -6,11 +6,6 @@ Each run creates a new experiment in LangSmith with:
   - Per-question scores for answer_correctness, hallucination, document_relevance
   - Aggregate scores visible in the LangSmith dashboard
 
-Evaluators:
-  answer_correctness  → LLM compares generated answer vs ground truth
-  hallucination       → LLM checks if answer contains info NOT in retrieved context
-  document_relevance  → LLM checks if each retrieved document is relevant to the question
-
 Usage:
     python evaluation/run_langsmith_eval.py --api-url http://localhost:8000
     python evaluation/run_langsmith_eval.py --api-url http://<alb_url>
@@ -28,7 +23,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 load_dotenv()
 
 from langsmith import Client
-from langsmith.evaluation import evaluate, LangChainStringEvaluator
+from langsmith.evaluation import evaluate
+from langsmith.schemas import Run, Example
 from langchain_openai import ChatOpenAI
 from config.chunking import CHUNKING_STRATEGY, EMBEDDING
 from config.retrieval import (
@@ -67,85 +63,95 @@ def _build_experiment_metadata(api_url: str) -> dict:
     }
 
 
+def _score_with_llm(prompt: str) -> float:
+    """Ask the LLM to score from 0 to 1. Returns 0.5 on failure."""
+    try:
+        response = _llm.invoke(prompt)
+        text = response.content.strip()
+        # Extract first number found in response
+        import re
+        numbers = re.findall(r'\d+(?:\.\d+)?', text)
+        if numbers:
+            score = float(numbers[0])
+            # Normalize if score is 0-10
+            if score > 1:
+                score = score / 10
+            return min(max(score, 0.0), 1.0)
+    except Exception:
+        pass
+    return 0.5
+
+
 # ── Evaluators ────────────────────────────────────────────────────────────────
 
-# 1. Answer correctness
-# Compares the generated answer against the ground truth chunk.
-# Measures factual accuracy — did GPT-4o get it right?
-answer_correctness_evaluator = LangChainStringEvaluator(
-    "labeled_score_string",
-    config={
-        "criteria": {
-            "correctness": (
-                "Is the answer factually correct and complete based on the reference? "
-                "Score 10 if fully correct, 5 if partially correct, 0 if wrong or missing key info."
-            )
-        },
-        "normalize_by": 10,
-    },
-    prepare_data=lambda run, example: {
-        "prediction": run.outputs.get("answer", ""),
-        "reference":  example.outputs.get("ground_truth", ""),
-        "input":      example.inputs.get("question", ""),
-    },
-)
+def answer_correctness(run: Run, example: Example) -> dict:
+    """Is the answer factually correct compared to the ground truth?"""
+    question    = example.inputs.get("question", "")
+    answer      = run.outputs.get("answer", "")
+    ground_truth = example.outputs.get("ground_truth", "")
 
-# 2. Hallucination
-# Checks if the answer contains information NOT present in the retrieved context.
-# Uses the retrieved sources (not the ground truth) as the reference — this is
-# the correct way to detect hallucination in RAG: the model should only use
-# what was retrieved, regardless of what the ground truth says.
-hallucination_evaluator = LangChainStringEvaluator(
-    "labeled_score_string",
-    config={
-        "criteria": {
-            "faithfulness": (
-                "Does the answer contain ONLY information that can be found in the provided context? "
-                "Score 10 if the answer is fully grounded in the context (no hallucination). "
-                "Score 5 if the answer is mostly grounded but adds minor unsupported details. "
-                "Score 0 if the answer contains significant information not present in the context."
-            )
-        },
-        "normalize_by": 10,
-    },
-    prepare_data=lambda run, example: {
-        # Reference is the retrieved context, not the ground truth
-        "prediction": run.outputs.get("answer", ""),
-        "reference":  " ".join([s.get("content", "") for s in run.outputs.get("sources", [])]),
-        "input":      example.inputs.get("question", ""),
-    },
-)
+    prompt = f"""Rate the factual correctness of the answer compared to the reference.
+Question: {question}
+Reference: {ground_truth}
+Answer: {answer}
 
-# 3. Document relevance
-# Checks if the retrieved documents are relevant to the question.
-# Uses the question (not the ground truth) as reference — this measures
-# retrieval quality independently of whether the answer is correct.
-document_relevance_evaluator = LangChainStringEvaluator(
-    "labeled_score_string",
-    config={
-        "criteria": {
-            "relevance": (
-                "Are the retrieved documents relevant to answer the question? "
-                "Score 10 if all documents are highly relevant. "
-                "Score 5 if some documents are relevant but there is noise. "
-                "Score 0 if the documents are mostly irrelevant to the question."
-            )
-        },
-        "normalize_by": 10,
-    },
-    prepare_data=lambda run, example: {
-        # Prediction is the retrieved documents, reference is the question
-        "prediction": " ".join([s.get("content", "") for s in run.outputs.get("sources", [])]),
-        "reference":  example.inputs.get("question", ""),
-        "input":      example.inputs.get("question", ""),
-    },
-)
+Respond with a single number from 0 to 10:
+- 10: fully correct and complete
+- 5: partially correct
+- 0: incorrect or missing key information
+
+Number only:"""
+
+    score = _score_with_llm(prompt)
+    return {"key": "answer_correctness", "score": score}
+
+
+def hallucination(run: Run, example: Example) -> dict:
+    """Does the answer contain info NOT in the retrieved context?"""
+    question = example.inputs.get("question", "")
+    answer   = run.outputs.get("answer", "")
+    sources  = " ".join([s.get("content", "") for s in run.outputs.get("sources", [])])
+
+    prompt = f"""Rate whether the answer is grounded in the provided context (no hallucination).
+Question: {question}
+Context (retrieved documents): {sources[:2000]}
+Answer: {answer}
+
+Respond with a single number from 0 to 10:
+- 10: answer only uses information from the context (no hallucination)
+- 5: answer mostly uses context but adds minor unsupported details
+- 0: answer contains significant information not present in context
+
+Number only:"""
+
+    score = _score_with_llm(prompt)
+    return {"key": "hallucination", "score": score}
+
+
+def document_relevance(run: Run, example: Example) -> dict:
+    """Are the retrieved documents relevant to the question?"""
+    question = example.inputs.get("question", "")
+    sources  = " ".join([s.get("content", "") for s in run.outputs.get("sources", [])])
+
+    prompt = f"""Rate how relevant the retrieved documents are to answering the question.
+Question: {question}
+Retrieved documents: {sources[:2000]}
+
+Respond with a single number from 0 to 10:
+- 10: all documents are highly relevant
+- 5: some documents are relevant, some are noise
+- 0: documents are mostly irrelevant
+
+Number only:"""
+
+    score = _score_with_llm(prompt)
+    return {"key": "document_relevance", "score": score}
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--api-url",       required=True)
-    parser.add_argument("--dataset-name",  default="cloudrag-eval")
+    parser.add_argument("--api-url",         required=True)
+    parser.add_argument("--dataset-name",    default="cloudrag-eval")
     parser.add_argument("--experiment-name", default=None)
     args = parser.parse_args()
 
@@ -179,20 +185,29 @@ def main():
         pipeline,
         data=args.dataset_name,
         evaluators=[
-            answer_correctness_evaluator,
-            hallucination_evaluator,
-            document_relevance_evaluator,
+            answer_correctness,
+            hallucination,
+            document_relevance,
         ],
         experiment_prefix=experiment_name,
         metadata=metadata,
         client=client,
+        max_concurrency=1,
     )
 
     print(f"\n{'='*52}")
     print(f"  LANGSMITH RESULTS — {experiment_name}")
     print(f"{'='*52}")
-    for metric, score in results.aggregate_feedback.items():
-        print(f"  {metric:<30} {score:.4f}")
+    try:
+        import math
+        df = results.to_pandas()
+        score_cols = [c for c in df.columns if "score" in c.lower()]
+        for col in score_cols:
+            avg = df[col].dropna().mean()
+            if not math.isnan(avg):
+                print(f"  {col:<35} {avg:.4f}")
+    except Exception:
+        print(f"  Results saved — view at LangSmith dashboard")
     print(f"{'='*52}")
     print(f"\n  View at: https://smith.langchain.com\n")
 

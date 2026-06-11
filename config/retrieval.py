@@ -21,7 +21,7 @@ RETRIEVAL_TOP_K_CANDIDATES = 20
 RETRIEVAL_TOP_K_FINAL = 5
 
 # ── Reranking ─────────────────────────────────────────────────────────────────
-RERANKING_ENABLED = True
+RERANKING_ENABLED = False
 
 # Cohere reranking model.
 # Options: "rerank-english-v3.0", "rerank-multilingual-v3.0", "rerank-english-v2.0"

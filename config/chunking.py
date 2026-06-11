@@ -8,7 +8,7 @@ Each run is traced separately in LangSmith under the project name.
 # ---------------------------------------------------------------
 # Active strategy: "fixed" | "structure" | "semantic" | "sentence_window" | "parent_child"
 # ---------------------------------------------------------------
-CHUNKING_STRATEGY = "structure"
+CHUNKING_STRATEGY = "sentence_window"
 
 # ---------------------------------------------------------------
 # Fixed-size chunking (baseline)

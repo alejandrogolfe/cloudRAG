@@ -153,7 +153,10 @@ cloudRAG/
 ├── verify_upload.py            # Verifies index count, embeddings, and kNN query
 ├── delete_index.py             # Deletes the OpenSearch index (use when recreating mapping)
 ├── create_secrets.py           # Pushes .env values to AWS Secrets Manager
-└── deploy_image.py             # Builds and pushes Docker image to ECR manually
+├── deploy_image.py             # Builds and pushes Docker image to ECR manually
+├── evaluation/
+│   ├── create_langsmith_dataset.py # Creates synthetic dataset in LangSmith
+│   └── run_langsmith_eval.py       # Runs evaluation experiment against LangSmith dataset
 ```
 
 ---
@@ -432,6 +435,51 @@ Results are saved to `output/ragas_eval.json`.
 | Reranking (on/off, model) | `ragas_eval.py` → context_precision |
 | Augmenter prompt | `ragas_eval.py` → faithfulness + answer_relevancy |
 | Generator model | `ragas_eval.py` → faithfulness + answer_relevancy |
+
+---
+
+### Layer 3 — LangSmith Evaluation (end-to-end, experiment tracking)
+
+Evaluates the full pipeline against a persistent dataset stored in LangSmith.
+Each run creates a named experiment with the full configuration as metadata,
+allowing comparison across different configurations (chunking, retrieval, reranking).
+
+```bash
+# Create the dataset in LangSmith (first time only)
+# Run from the evaluation venv
+python evaluation/create_langsmith_dataset.py --chunks-path ./output/chunks_structure.json --max-chunks 25
+
+# Run an evaluation experiment
+python evaluation/run_langsmith_eval.py --api-url http://localhost:8000
+```
+
+Experiments are named automatically from the current config, e.g.:
+`structure-hybrid-rerank-20260611-1030`
+
+**Metrics:**
+
+**answer_correctness** — is the generated answer factually correct compared to the ground truth?
+
+**hallucination** — does the answer contain only information present in the retrieved context?
+
+**document_relevance** — are the retrieved documents relevant to the question?
+
+Results are visible at [smith.langchain.com](https://smith.langchain.com) under Datasets & Experiments.
+
+The dataset grows over time — add real user queries from the LangSmith dashboard (Tracing → select a run → Add to dataset).
+
+---
+
+### Observability — LangSmith Tracing
+
+Every query hitting the API is automatically traced in LangSmith thanks to `@traceable` decorators on each node.
+
+- **Local**: traces go to project `cloudRAG-offline`
+- **ECS**: traces go to project `cloudRAG-online`
+
+Each trace shows the full pipeline waterfall: retrieve → rerank → augment → generate, with latency, inputs and outputs per node, token usage and cost.
+
+Note: set `LANGCHAIN_TRACING_V2=true` (lowercase) in `.env` — uppercase `True` is not recognized.
 
 ---
 

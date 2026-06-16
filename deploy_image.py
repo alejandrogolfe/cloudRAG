@@ -14,12 +14,23 @@ Requirements:
 import os
 import subprocess
 import sys
+import boto3
 
-AWS_REGION      = "eu-west-1"
-AWS_ACCOUNT_ID  = "151015118101"
-ECR_REPO        = f"{AWS_ACCOUNT_ID}.dkr.ecr.{AWS_REGION}.amazonaws.com/cloudrag-dev"
-ECS_CLUSTER     = "cloudrag-dev"
-ECS_SERVICE     = "cloudrag-dev"
+def _require_env(name: str) -> str:
+    value = os.environ.get(name)
+    if not value:
+        print(f"[error] Environment variable {name} is not set")
+        sys.exit(1)
+    return value
+
+AWS_REGION      = _require_env("AWS_REGION")
+ECR_REPOSITORY  = _require_env("ECR_REPOSITORY")
+ECS_CLUSTER     = _require_env("ECS_CLUSTER")
+ECS_SERVICE     = _require_env("ECS_SERVICE")
+
+# Derive account ID from configured AWS credentials — no hardcoding needed
+AWS_ACCOUNT_ID  = boto3.client("sts").get_caller_identity()["Account"]
+ECR_REPO        = f"{AWS_ACCOUNT_ID}.dkr.ecr.{AWS_REGION}.amazonaws.com/{ECR_REPOSITORY}"
 
 
 def run(cmd: str, check=True):

@@ -7,8 +7,11 @@ on:
     paths:
       - 'retrieval/**'
       - 'config/**'
+      - 'ingestion/**'
+      - 'tests/**'
       - 'Dockerfile'
       - 'requirements.txt'
+      - 'requirements-test.txt'
 
 env:
   AWS_REGION:      eu-west-1
@@ -17,9 +20,31 @@ env:
   ECS_SERVICE:     cloudrag-dev
 
 jobs:
+  test:
+    name: Run tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-test.txt
+
+      - name: Run tests
+        run: pytest tests/ -v
+
   deploy:
     name: Build and deploy
     runs-on: ubuntu-latest
+    needs: test
 
     steps:
       - name: Checkout code

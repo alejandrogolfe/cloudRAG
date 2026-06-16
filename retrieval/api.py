@@ -18,8 +18,11 @@ load_dotenv()
 import os
 import logging
 import json
-from fastapi import FastAPI, HTTPException, Security, status
+from fastapi import FastAPI, HTTPException, Request, Security, status
 from fastapi.security import APIKeyHeader
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 from pydantic import BaseModel
 from typing import List, Optional
 import dataclasses
@@ -55,11 +58,16 @@ def _require_api_key(api_key: str = Security(_API_KEY_HEADER)) -> str:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid or missing API key")
     return api_key
 
+_RATE_LIMIT = os.environ.get("RATE_LIMIT", "10/minute")
+limiter = Limiter(key_func=get_remote_address)
+
 app = FastAPI(
     title="cloudRAG",
     description="Retrieval-Augmented Generation API",
     version="1.0.0",
 )
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Build the graph once at startup — not on every request
 graph = build_retrieval_graph()
@@ -101,7 +109,8 @@ def health():
 
 
 @app.post("/query", response_model=QueryResponse)
-def query(request: QueryRequest, _: str = Security(_require_api_key)):
+@limiter.limit(_RATE_LIMIT)
+def query(request: Request, body: QueryRequest, _: str = Security(_require_api_key)):
     """
     Accepts a question and returns an answer generated from relevant document chunks.
 
@@ -111,13 +120,13 @@ def query(request: QueryRequest, _: str = Security(_require_api_key)):
       3. Assembles a prompt with the top-k chunks as context
       4. Calls GPT-4o to generate the answer
     """
-    if not request.question.strip():
+    if not body.question.strip():
         raise HTTPException(status_code=400, detail="Question cannot be empty")
 
     try:
         state = graph.invoke({
-            "question": request.question,
-            "top_k": request.top_k,
+            "question": body.question,
+            "top_k": body.top_k,
             "query_embedding": [],
             "retrieved_chunks": [],
             "reranked_chunks": [],
@@ -134,7 +143,7 @@ def query(request: QueryRequest, _: str = Security(_require_api_key)):
     ]
 
     return QueryResponse(
-        question=request.question,
+        question=body.question,
         answer=state["answer"],
         sources=sources,
     )

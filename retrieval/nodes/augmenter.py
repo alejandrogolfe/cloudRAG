@@ -15,11 +15,19 @@ on prompt engineering without touching retrieval or generation logic.
 """
 
 import logging
+import tiktoken
 from retrieval.state import RetrievalState
 from retrieval.models import RetrievedChunk
 from langsmith import traceable
 
 logger = logging.getLogger(__name__)
+
+# gpt-4o has a 128k context window; reserve 8k for the answer and overhead
+_MAX_PROMPT_TOKENS = 120_000
+_ENCODING = tiktoken.encoding_for_model("gpt-4o")
+
+def _count_tokens(text: str) -> int:
+    return len(_ENCODING.encode(text))
 
 
 SYSTEM_PROMPT = """You are a helpful assistant that answers questions based on the provided context.
@@ -61,9 +69,16 @@ def augment_node(state: RetrievalState) -> dict:
         context_parts.append(f"{label}\n{_get_context(chunk)}")
 
     context = "\n\n---\n\n".join(context_parts)
-
     prompt = f"{SYSTEM_PROMPT}\n\n## Context\n\n{context}\n\n## Question\n\n{question}"
 
-    logger.info(f"augment — prompt built with {len(chunks)} chunks ({len(prompt)} chars)")
+    # Trim least-relevant chunks (from the end) if prompt exceeds token limit
+    while len(context_parts) > 1 and _count_tokens(prompt) > _MAX_PROMPT_TOKENS:
+        context_parts.pop()
+        context = "\n\n---\n\n".join(context_parts)
+        prompt = f"{SYSTEM_PROMPT}\n\n## Context\n\n{context}\n\n## Question\n\n{question}"
+        logger.warning(f"augment — prompt exceeded {_MAX_PROMPT_TOKENS} tokens, trimmed to {len(context_parts)} chunks")
+
+    token_count = _count_tokens(prompt)
+    logger.info(f"augment — prompt built with {len(context_parts)} chunks ({token_count} tokens)")
 
     return {"prompt": prompt}

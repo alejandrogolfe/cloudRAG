@@ -1,4 +1,6 @@
 tenacity>=8.0.0
+slowapi>=0.1.0
+tiktoken>=0.7.0
 langgraph>=0.2.0
 langchain>=0.3.0
 langchain-text-splitters>=0.3.0

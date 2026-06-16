@@ -15,13 +15,25 @@ Usage (Docker):
 from dotenv import load_dotenv
 load_dotenv()
 
-from fastapi import FastAPI, HTTPException
+import os
+from fastapi import FastAPI, HTTPException, Security, status
+from fastapi.security import APIKeyHeader
 from pydantic import BaseModel
 from typing import List, Optional
 import dataclasses
 
 from retrieval.graph import build_retrieval_graph
 from retrieval.models import RetrievedChunk
+
+_API_KEY_HEADER = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+def _require_api_key(api_key: str = Security(_API_KEY_HEADER)) -> str:
+    expected = os.environ.get("API_KEY", "")
+    if not expected:
+        raise RuntimeError("API_KEY environment variable is not set")
+    if api_key != expected:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid or missing API key")
+    return api_key
 
 app = FastAPI(
     title="cloudRAG",
@@ -69,7 +81,7 @@ def health():
 
 
 @app.post("/query", response_model=QueryResponse)
-def query(request: QueryRequest):
+def query(request: QueryRequest, _: str = Security(_require_api_key)):
     """
     Accepts a question and returns an answer generated from relevant document chunks.
 

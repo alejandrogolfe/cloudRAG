@@ -34,6 +34,7 @@ KEYS_TO_PUSH = [
     "OPENSEARCH_INDEX",
     "AWS_REGION",
     "COHERE_API_KEY",
+    "API_KEY",
 ]
 
 SECRET_PREFIX = "cloudrag"

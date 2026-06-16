@@ -91,8 +91,9 @@ def test_augment_truncates_when_over_token_limit(monkeypatch):
 # ── rerank_node ───────────────────────────────────────────────────────────────
 
 def test_rerank_disabled_returns_top_k(monkeypatch):
-    monkeypatch.setattr(retrieval_config, "RERANKING_ENABLED", False)
-    monkeypatch.setattr(retrieval_config, "RETRIEVAL_TOP_K_FINAL", 2)
+    import retrieval.nodes.reranker as reranker_module
+    monkeypatch.setattr(reranker_module, "RERANKING_ENABLED", False)
+    monkeypatch.setattr(reranker_module, "RETRIEVAL_TOP_K_FINAL", 2)
     candidates = [_chunk(score=0.9), _chunk(score=0.8), _chunk(score=0.7)]
     result = rerank_node({"question": "test", "retrieved_chunks": candidates})
     assert len(result["reranked_chunks"]) == 2
@@ -100,8 +101,9 @@ def test_rerank_disabled_returns_top_k(monkeypatch):
 
 
 def test_rerank_cohere_fallback(monkeypatch):
-    monkeypatch.setattr(retrieval_config, "RERANKING_ENABLED", True)
-    monkeypatch.setattr(retrieval_config, "RETRIEVAL_TOP_K_FINAL", 2)
+    import retrieval.nodes.reranker as reranker_module
+    monkeypatch.setattr(reranker_module, "RERANKING_ENABLED", True)
+    monkeypatch.setattr(reranker_module, "RETRIEVAL_TOP_K_FINAL", 2)
     with patch("retrieval.nodes.reranker._call_cohere_rerank", side_effect=Exception("Cohere down")):
         candidates = [_chunk(score=0.9), _chunk(score=0.8), _chunk(score=0.7)]
         result = rerank_node({"question": "test", "retrieved_chunks": candidates})

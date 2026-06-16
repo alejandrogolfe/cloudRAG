@@ -16,10 +16,13 @@ Why RRF instead of score combination:
 
 import os
 from typing import List, Dict
+import openai
 from openai import OpenAI
 from opensearchpy import OpenSearch, RequestsHttpConnection, AWSV4SignerAuth
+from opensearchpy.exceptions import ConnectionError as OSConnectionError, ConnectionTimeout as OSConnectionTimeout, TransportError
 import boto3
 from langsmith import traceable
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
 
 from retrieval.state import RetrievalState
 from retrieval.models import RetrievedChunk
@@ -30,6 +33,34 @@ from config.retrieval import (
 
 openai_client = OpenAI()
 RRF_K = 60  # standard RRF constant
+
+_OPENAI_TRANSIENT = (
+    openai.RateLimitError,
+    openai.APITimeoutError,
+    openai.APIConnectionError,
+    openai.InternalServerError,
+)
+
+def _is_transient_opensearch_error(exc: BaseException) -> bool:
+    if isinstance(exc, (OSConnectionError, OSConnectionTimeout)):
+        return True
+    if isinstance(exc, TransportError) and exc.status_code >= 500:
+        return True
+    return False
+
+_retry_openai = retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=1, max=10),
+    retry=retry_if_exception(lambda e: isinstance(e, _OPENAI_TRANSIENT)),
+    reraise=True,
+)
+
+_retry_opensearch = retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=1, max=10),
+    retry=retry_if_exception(_is_transient_opensearch_error),
+    reraise=True,
+)
 
 
 def _get_opensearch_client() -> OpenSearch:
@@ -46,6 +77,7 @@ def _get_opensearch_client() -> OpenSearch:
     )
 
 
+@_retry_openai
 def _embed_question(question: str) -> List[float]:
     response = openai_client.embeddings.create(
         model="text-embedding-3-small",
@@ -54,6 +86,7 @@ def _embed_question(question: str) -> List[float]:
     return response.data[0].embedding
 
 
+@_retry_opensearch
 def _search_knn(client: OpenSearch, index: str, embedding: List[float], top_k: int) -> List[Dict]:
     response = client.search(
         index=index,
@@ -73,6 +106,7 @@ def _search_knn(client: OpenSearch, index: str, embedding: List[float], top_k: i
     return response["hits"]["hits"]
 
 
+@_retry_opensearch
 def _search_bm25(client: OpenSearch, index: str, question: str, top_k: int) -> List[Dict]:
     response = client.search(
         index=index,

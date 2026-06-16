@@ -15,6 +15,8 @@ import os
 import subprocess
 import sys
 import boto3
+from dotenv import load_dotenv
+load_dotenv()
 
 def _require_env(name: str) -> str:
     value = os.environ.get(name)

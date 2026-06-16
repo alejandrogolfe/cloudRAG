@@ -15,10 +15,13 @@ simply returns the first RETRIEVAL_TOP_K_FINAL candidates unchanged.
 """
 
 import os
+import logging
 from typing import List
 import cohere
 from langsmith import traceable
 from tenacity import retry, stop_after_attempt, wait_exponential
+
+logger = logging.getLogger(__name__)
 
 from retrieval.state import RetrievalState
 from retrieval.models import RetrievedChunk
@@ -58,13 +61,13 @@ def rerank_node(state: RetrievalState) -> dict:
 
     if not RERANKING_ENABLED:
         final_chunks = candidates[:RETRIEVAL_TOP_K_FINAL]
-        print(f"[rerank] disabled — using top {len(final_chunks)} kNN results directly")
+        logger.info(f"rerank disabled — using top {len(final_chunks)} kNN results directly")
         return {"reranked_chunks": final_chunks}
 
     try:
         reranked = _call_cohere_rerank(question, candidates)
-        print(f"[rerank] {len(candidates)} candidates → top {len(reranked)} (top score: {reranked[0].score:.4f})")
+        logger.info(f"rerank — {len(candidates)} candidates → top {len(reranked)} (top score: {reranked[0].score:.4f})")
         return {"reranked_chunks": reranked}
     except Exception as e:
-        print(f"[rerank] Cohere failed after retries ({e}) — falling back to kNN top-{RETRIEVAL_TOP_K_FINAL}")
+        logger.warning(f"Cohere rerank failed after retries ({e}) — falling back to kNN top-{RETRIEVAL_TOP_K_FINAL}")
         return {"reranked_chunks": candidates[:RETRIEVAL_TOP_K_FINAL]}

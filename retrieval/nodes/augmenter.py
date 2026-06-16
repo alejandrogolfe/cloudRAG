@@ -14,9 +14,12 @@ Keeping the prompt assembly in its own node makes it easy to iterate
 on prompt engineering without touching retrieval or generation logic.
 """
 
+import logging
 from retrieval.state import RetrievalState
 from retrieval.models import RetrievedChunk
 from langsmith import traceable
+
+logger = logging.getLogger(__name__)
 
 
 SYSTEM_PROMPT = """You are a helpful assistant that answers questions based on the provided context.
@@ -61,6 +64,6 @@ def augment_node(state: RetrievalState) -> dict:
 
     prompt = f"{SYSTEM_PROMPT}\n\n## Context\n\n{context}\n\n## Question\n\n{question}"
 
-    print(f"[augment] Prompt built — {len(chunks)} chunks, {len(prompt)} chars")
+    logger.info(f"augment — prompt built with {len(chunks)} chunks ({len(prompt)} chars)")
 
     return {"prompt": prompt}

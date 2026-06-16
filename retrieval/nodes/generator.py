@@ -5,12 +5,15 @@ Uses langchain_openai instead of openai directly so LangSmith
 automatically captures token usage and cost per query.
 """
 
+import logging
 import openai
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage
 from retrieval.state import RetrievalState
 from langsmith import traceable
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+
+logger = logging.getLogger(__name__)
 
 llm = ChatOpenAI(
     model="gpt-4o",
@@ -37,5 +40,5 @@ def _call_llm(prompt: str) -> str:
 @traceable(name="generate", run_type="llm")
 def generate_node(state: RetrievalState) -> dict:
     answer = _call_llm(state["prompt"])
-    print(f"[generate] Answer generated ({len(answer)} chars)")
+    logger.info(f"generate — answer generated ({len(answer)} chars)")
     return {"answer": answer}

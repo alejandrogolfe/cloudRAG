@@ -16,11 +16,31 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import os
+import logging
+import json
 from fastapi import FastAPI, HTTPException, Security, status
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel
 from typing import List, Optional
 import dataclasses
+
+
+class _JsonFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        data = {
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        if record.exc_info:
+            data["exception"] = self.formatException(record.exc_info)
+        return json.dumps(data)
+
+_handler = logging.StreamHandler()
+_handler.setFormatter(_JsonFormatter())
+logging.basicConfig(level=logging.INFO, handlers=[_handler], force=True)
+
+logger = logging.getLogger(__name__)
 
 from retrieval.graph import build_retrieval_graph
 from retrieval.models import RetrievedChunk
@@ -105,6 +125,7 @@ def query(request: QueryRequest, _: str = Security(_require_api_key)):
             "answer": "",
         })
     except Exception as e:
+        logger.error("Pipeline error", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
     sources = [

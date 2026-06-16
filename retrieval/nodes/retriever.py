@@ -15,6 +15,7 @@ Why RRF instead of score combination:
 """
 
 import os
+import logging
 from typing import List, Dict
 import openai
 from openai import OpenAI
@@ -23,6 +24,8 @@ from opensearchpy.exceptions import ConnectionError as OSConnectionError, Connec
 import boto3
 from langsmith import traceable
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
+
+logger = logging.getLogger(__name__)
 
 from retrieval.state import RetrievalState
 from retrieval.models import RetrievedChunk
@@ -203,7 +206,7 @@ def retrieve_node(state: RetrievalState) -> dict:
             metadata=extra_metadata,
         ))
 
-    print(f"[retrieve/{RETRIEVAL_STRATEGY}] '{question[:60]}' → {len(chunks)} candidates (top score: {chunks[0].score:.4f})")
+    logger.info(f"retrieve/{RETRIEVAL_STRATEGY} — '{question[:60]}' → {len(chunks)} candidates (top score: {chunks[0].score:.4f})")
 
     return {
         "query_embedding": query_embedding,

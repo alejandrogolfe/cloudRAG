@@ -13,6 +13,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY retrieval/ ./retrieval/
 COPY config/ ./config/
+COPY monitoring/ ./monitoring/
 
 # Don't run as root
 RUN useradd -m appuser

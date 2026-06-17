@@ -54,13 +54,17 @@ def _publish_to_cloudwatch(
         now = datetime.now(timezone.utc)
 
         metric_data = [
-            {"MetricName": "QueryCount",      "Dimensions": dimensions, "Value": 1,                "Unit": "Count",   "Timestamp": now},
-            {"MetricName": "LatencySeconds",  "Dimensions": dimensions, "Value": latency_seconds,  "Unit": "Seconds", "Timestamp": now},
+            {"MetricName": "QueryCount",     "Dimensions": dimensions, "Value": 1,               "Unit": "Count",   "Timestamp": now},
+            {"MetricName": "LatencySeconds", "Dimensions": dimensions, "Value": latency_seconds, "Unit": "Seconds", "Timestamp": now},
+            # Dimensionless rollup metrics — used by CloudWatch alarms (SEARCH not supported in alarms)
+            {"MetricName": "QueryCount",     "Dimensions": [],         "Value": 1,               "Unit": "Count",   "Timestamp": now},
+            {"MetricName": "LatencySeconds", "Dimensions": [],         "Value": latency_seconds, "Unit": "Seconds", "Timestamp": now},
         ]
         if cost_usd is not None:
-            metric_data.append(
-                {"MetricName": "CostPerQuery", "Dimensions": dimensions, "Value": cost_usd, "Unit": "None", "Timestamp": now}
-            )
+            metric_data.extend([
+                {"MetricName": "CostPerQuery", "Dimensions": dimensions, "Value": cost_usd, "Unit": "None", "Timestamp": now},
+                {"MetricName": "CostPerQuery", "Dimensions": [],         "Value": cost_usd, "Unit": "None", "Timestamp": now},
+            ])
 
         cloudwatch.put_metric_data(Namespace="cloudRAG/Costs", MetricData=metric_data)
         logger.info(

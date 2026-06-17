@@ -49,3 +49,28 @@ variable "desired_count" {
   type        = number
   default     = 1
 }
+
+# ── Monitoring / alerting ──────────────────────────────────────────────────────
+
+variable "alert_email" {
+  description = "Email address that receives CloudWatch alarm notifications via SNS"
+  type        = string
+}
+
+variable "cost_per_query_threshold_usd" {
+  description = "Alarm 1: alert when average cost per query exceeds this value in USD. Suggested starting point: 0.01 (1 cent). Adjust after a few days of real data."
+  type        = number
+  default     = 0.01
+}
+
+variable "daily_cost_budget_usd" {
+  description = "Alarm 2: alert when total LLM cost for the day exceeds this value in USD."
+  type        = number
+  default     = 5.0
+}
+
+variable "anomaly_detection_std_devs" {
+  description = "Alarm 3: number of standard deviations for the anomaly detection band on CostPerQuery. Higher = less sensitive."
+  type        = number
+  default     = 2
+}

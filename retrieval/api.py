@@ -26,6 +26,7 @@ from slowapi.errors import RateLimitExceeded
 from pydantic import BaseModel
 from typing import List, Optional
 import dataclasses
+import uuid
 from langchain_core.runnables import RunnableConfig
 
 
@@ -48,6 +49,7 @@ logger = logging.getLogger(__name__)
 
 from retrieval.graph import build_retrieval_graph
 from retrieval.models import RetrievedChunk
+from monitoring.cost_tracking import fetch_trace_cost
 from retrieval.nodes.generator import llm as _generator_llm
 from config.retrieval import RETRIEVAL_STRATEGY, RERANKING_ENABLED
 from config.chunking import CHUNKING_STRATEGY
@@ -138,11 +140,15 @@ def query(
     if not body.question.strip():
         raise HTTPException(status_code=400, detail="Question cannot be empty")
 
-    run_config = RunnableConfig(metadata={
-        "config_name": _CONFIG_NAME,
-        "user_id": user_id,
-        "model": _MODEL_NAME,
-    })
+    run_id = uuid.uuid4()
+    run_config = RunnableConfig(
+        run_id=run_id,
+        metadata={
+            "config_name": _CONFIG_NAME,
+            "user_id": user_id,
+            "model": _MODEL_NAME,
+        },
+    )
 
     try:
         state = graph.invoke({
@@ -157,6 +163,10 @@ def query(
     except Exception as e:
         logger.error("Pipeline error", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+    cost = fetch_trace_cost(str(run_id))
+    if cost is not None:
+        logger.info("trace cost — run_id=%s cost_usd=%.6f", run_id, cost)
 
     sources = [
         SourceResponse(**dataclasses.asdict(chunk))

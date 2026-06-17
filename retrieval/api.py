@@ -77,7 +77,7 @@ limiter = Limiter(key_func=get_remote_address)
 app = FastAPI(
     title="cloudRAG",
     description="Retrieval-Augmented Generation API",
-    version="1.0.0",
+    version="1.0.1",
 )
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)

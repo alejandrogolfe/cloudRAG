@@ -18,9 +18,6 @@ def _cosine_similarity(query_vec: np.ndarray, chunk_vecs: np.ndarray) -> np.ndar
     """
     return np.dot(chunk_vecs, query_vec)
 
-
-
-
 def retrieve(
     query_embedding: List[float],
     chunks: List[Chunk],

@@ -26,6 +26,7 @@ from slowapi.errors import RateLimitExceeded
 from pydantic import BaseModel
 from typing import List, Optional
 import dataclasses
+import time
 import uuid
 from langchain_core.runnables import RunnableConfig
 
@@ -49,7 +50,7 @@ logger = logging.getLogger(__name__)
 
 from retrieval.graph import build_retrieval_graph
 from retrieval.models import RetrievedChunk
-from monitoring.cost_tracking import fetch_trace_cost
+from monitoring.cost_tracking import track_query_async
 from retrieval.nodes.generator import llm as _generator_llm
 from config.retrieval import RETRIEVAL_STRATEGY, RERANKING_ENABLED
 from config.chunking import CHUNKING_STRATEGY
@@ -150,6 +151,7 @@ def query(
         },
     )
 
+    t0 = time.perf_counter()
     try:
         state = graph.invoke({
             "question": body.question,
@@ -163,10 +165,15 @@ def query(
     except Exception as e:
         logger.error("Pipeline error", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+    latency = time.perf_counter() - t0
 
-    cost = fetch_trace_cost(str(run_id))
-    if cost is not None:
-        logger.info("trace cost — run_id=%s cost_usd=%.6f", run_id, cost)
+    track_query_async(
+        run_id=str(run_id),
+        latency_seconds=latency,
+        config_name=_CONFIG_NAME,
+        model=_MODEL_NAME,
+        user_id=user_id,
+    )
 
     sources = [
         SourceResponse(**dataclasses.asdict(chunk))

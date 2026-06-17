@@ -1,7 +1,7 @@
 from retrieval.models import RetrievedChunk
 
 API_KEY = "test-api-key-12345"
-AUTH = {"X-API-Key": API_KEY}
+AUTH = {"X-API-Key": API_KEY, "X-User-Id": "test-user"}
 
 
 def test_health(client):
@@ -11,13 +11,18 @@ def test_health(client):
 
 
 def test_query_no_api_key(client):
-    response = client.post("/query", json={"question": "What is RAG?"})
+    response = client.post("/query", json={"question": "What is RAG?"}, headers={"X-User-Id": "test-user"})
     assert response.status_code == 403
 
 
 def test_query_wrong_api_key(client):
-    response = client.post("/query", json={"question": "What is RAG?"}, headers={"X-API-Key": "wrong-key"})
+    response = client.post("/query", json={"question": "What is RAG?"}, headers={"X-API-Key": "wrong-key", "X-User-Id": "test-user"})
     assert response.status_code == 403
+
+
+def test_query_no_user_id(client):
+    response = client.post("/query", json={"question": "What is RAG?"}, headers={"X-API-Key": API_KEY})
+    assert response.status_code == 422
 
 
 def test_query_empty_question(client):

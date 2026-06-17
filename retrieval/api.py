@@ -18,7 +18,7 @@ load_dotenv()
 import os
 import logging
 import json
-from fastapi import FastAPI, HTTPException, Request, Security, status
+from fastapi import FastAPI, Header, HTTPException, Request, Security, status
 from fastapi.security import APIKeyHeader
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
@@ -26,6 +26,7 @@ from slowapi.errors import RateLimitExceeded
 from pydantic import BaseModel
 from typing import List, Optional
 import dataclasses
+from langchain_core.runnables import RunnableConfig
 
 
 class _JsonFormatter(logging.Formatter):
@@ -47,6 +48,15 @@ logger = logging.getLogger(__name__)
 
 from retrieval.graph import build_retrieval_graph
 from retrieval.models import RetrievedChunk
+from retrieval.nodes.generator import llm as _generator_llm
+from config.retrieval import RETRIEVAL_STRATEGY, RERANKING_ENABLED
+from config.chunking import CHUNKING_STRATEGY
+
+_CONFIG_NAME = (
+    f"{CHUNKING_STRATEGY}_{RETRIEVAL_STRATEGY}_"
+    f"{'rerank' if RERANKING_ENABLED else 'norerank'}"
+)
+_MODEL_NAME = _generator_llm.model_name
 
 _API_KEY_HEADER = APIKeyHeader(name="X-API-Key", auto_error=False)
 
@@ -110,7 +120,12 @@ def health():
 
 @app.post("/query", response_model=QueryResponse)
 @limiter.limit(_RATE_LIMIT)
-def query(request: Request, body: QueryRequest, _: str = Security(_require_api_key)):
+def query(
+    request: Request,
+    body: QueryRequest,
+    _: str = Security(_require_api_key),
+    user_id: str = Header(..., alias="X-User-Id"),
+):
     """
     Accepts a question and returns an answer generated from relevant document chunks.
 
@@ -123,6 +138,12 @@ def query(request: Request, body: QueryRequest, _: str = Security(_require_api_k
     if not body.question.strip():
         raise HTTPException(status_code=400, detail="Question cannot be empty")
 
+    run_config = RunnableConfig(metadata={
+        "config_name": _CONFIG_NAME,
+        "user_id": user_id,
+        "model": _MODEL_NAME,
+    })
+
     try:
         state = graph.invoke({
             "question": body.question,
@@ -132,7 +153,7 @@ def query(request: Request, body: QueryRequest, _: str = Security(_require_api_k
             "reranked_chunks": [],
             "prompt": "",
             "answer": "",
-        })
+        }, config=run_config)
     except Exception as e:
         logger.error("Pipeline error", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))

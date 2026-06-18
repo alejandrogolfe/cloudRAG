@@ -46,10 +46,13 @@ def _publish_to_cloudwatch(
         import boto3
         cloudwatch = boto3.client("cloudwatch", region_name=os.environ.get("AWS_REGION", "eu-west-1"))
 
+        # UserId is deliberately excluded from CloudWatch dimensions — each unique
+        # value creates a separate billed custom metric, so a growing user base
+        # would blow up CloudWatch cost and console usability. Per-user breakdowns
+        # are derived from the structured log line below via Logs Insights instead.
         dimensions = [
             {"Name": "ConfigName", "Value": config_name},
             {"Name": "Model",      "Value": model},
-            {"Name": "UserId",     "Value": user_id},
         ]
         now = datetime.now(timezone.utc)
 
@@ -67,10 +70,13 @@ def _publish_to_cloudwatch(
             ])
 
         cloudwatch.put_metric_data(Namespace="cloudRAG/Costs", MetricData=metric_data)
+        # Structured, parseable fields — the dashboard's per-user widgets read this
+        # via CloudWatch Logs Insights instead of a CloudWatch metric dimension.
         logger.info(
-            "CloudWatch metrics published — run_id=%s latency=%.3fs cost=%s",
-            run_id, latency_seconds,
-            f"${cost_usd:.6f}" if cost_usd is not None else "unavailable",
+            "CloudWatch metrics published run_id=%s user_id=%s config_name=%s model=%s "
+            "latency_seconds=%.3f cost_usd=%s",
+            run_id, user_id, config_name, model, latency_seconds,
+            f"{cost_usd:.6f}" if cost_usd is not None else "null",
         )
     except Exception as e:
         logger.warning("Failed to publish CloudWatch metrics for run %s: %s", run_id, e)

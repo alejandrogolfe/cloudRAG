@@ -14,8 +14,8 @@ resource "aws_sns_topic_subscription" "alert_email" {
 
 # NOTE: CloudWatch metric alarms do not support SEARCH() expressions.
 # The app publishes two copies of each metric:
-#   - With dimensions (ConfigName, Model, UserId) → used by the dashboard
-#   - Without dimensions (rollup)                 → used by these alarms
+#   - With dimensions (ConfigName, Model) → used by the dashboard
+#   - Without dimensions (rollup)         → used by these alarms
 # Both go to the same namespace "cloudRAG/Costs".
 
 # ── Alarm 1: avg cost per query exceeds fixed threshold ────────────────────────

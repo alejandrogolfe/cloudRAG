@@ -28,8 +28,7 @@ Markdown / MDX Files
       ↓
   Chunk Node      → fixed-size or structure-aware chunking (configurable via config/chunking.py)
       ↓
-  Embed Node      → OpenAI text-embedding-3-small (1536 dims, local dev)
-                    Amazon Bedrock Titan Embeddings v2 (1024 dims, production)
+  Embed Node      → OpenAI text-embedding-3-small (1536 dims)
       ↓
   [saved to output/chunks_{strategy}.json]
       ↓
@@ -59,17 +58,27 @@ User Query
       ↓
   ALB             → public HTTPS endpoint
       ↓
+  Auth + Rate Limit → X-API-Key header (FastAPI Security) + slowapi
+                       (default 10/minute, configurable via RATE_LIMIT)
+      ↓
   Retrieve Node   → kNN or Hybrid search (kNN + BM25 with RRF) on OpenSearch Serverless
                     configurable via config/retrieval.py (RETRIEVAL_STRATEGY)
+                    retries (tenacity) on OpenAI embedding + OpenSearch calls
       ↓
   Rerank Node     → Cohere Rerank API — top-20 candidates → top-5 final
                     configurable via RERANKING_ENABLED
+                    retries (tenacity), falls back to top-5 kNN if Cohere stays down
       ↓
   Augment Node    → context assembly with reranked chunks
+                    trims least-relevant chunks if prompt exceeds 120k tokens (tiktoken)
       ↓
-  Generate Node   → OpenAI GPT-4o
+  Generate Node   → OpenAI GPT-4o, retries (tenacity) on transient API errors
       ↓
   Response: { answer, sources }
+      ↓
+  Cost tracking (background thread, doesn't block the response):
+    fetch trace cost from LangSmith → publish QueryCount/LatencySeconds/CostPerQuery
+    to CloudWatch (namespace cloudRAG/Costs)
 ```
 
 ---
@@ -79,13 +88,20 @@ User Query
 | Component | Technology |
 |---|---|
 | Pipeline orchestration | LangGraph |
-| Observability | LangSmith |
-| Embeddings (dev) | OpenAI text-embedding-3-small (1536 dims) |
-| Embeddings (prod) | Amazon Bedrock Titan Embeddings v2 (1024 dims) |
+| Observability / tracing | LangSmith |
+| Embeddings | OpenAI text-embedding-3-small (1536 dims) — same model in dev and prod |
 | Vector store | Amazon OpenSearch Serverless |
 | LLM (online) | OpenAI GPT-4o |
 | Evaluation | OpenAI GPT-4o-mini |
 | API | FastAPI + uvicorn |
+| Auth | API key (`X-API-Key` header) |
+| Rate limiting | slowapi (default 10/minute, `RATE_LIMIT` env var) |
+| Resilience | tenacity retries (retriever, reranker, generator) + Cohere→kNN fallback |
+| Token budgeting | tiktoken — trims context if prompt exceeds 120k tokens |
+| Cost & usage tracking | boto3 → CloudWatch custom metrics (`cloudRAG/Costs`) + LangSmith trace cost |
+| Daily infra cost tracking | AWS Lambda + EventBridge (06:00 UTC) reading Cost Explorer |
+| Monitoring | CloudWatch Dashboard, Alarms (SNS), Logs Insights |
+| Testing | pytest (19 tests, mocked graph — runs in CI before every deploy) |
 | Infrastructure | Terraform |
 | Container registry | Amazon ECR |
 | Container runtime | Amazon ECS (Fargate) |
@@ -120,39 +136,52 @@ cloudRAG/
 │   ├── faithfulness.py         # Chunk completeness evaluation with GPT-4o-mini
 │   └── ragas_eval.py           # End-to-end pipeline evaluation with RAGAS
 ├── retrieval/                  # Online pipeline
-│   ├── api.py                  # FastAPI app — POST /query, GET /health
-│   ├── graph.py                # LangGraph graph: retrieve → augment → generate
+│   ├── api.py                  # FastAPI app — POST /query, GET /health, auth + rate limiting, JSON logging
+│   ├── graph.py                # LangGraph graph: retrieve → rerank → augment → generate
 │   ├── models.py               # QueryRequest, QueryResponse, RetrievedChunk
 │   ├── state.py                # RetrievalState
 │   └── nodes/
-│       ├── retriever.py        # kNN or hybrid search (RRF) on OpenSearch
-│       ├── reranker.py         # Cohere Rerank API — top-20 → top-5
-│       ├── augmenter.py        # Prompt assembly with reranked chunks
-│       └── generator.py        # GPT-4o generation
+│       ├── retriever.py        # kNN or hybrid search (RRF) on OpenSearch, with retries
+│       ├── reranker.py         # Cohere Rerank API — top-20 → top-5, retries + kNN fallback
+│       ├── augmenter.py        # Prompt assembly with reranked chunks, token-budget trimming
+│       └── generator.py        # GPT-4o generation, with retries
+├── monitoring/
+│   └── cost_tracking.py        # Per-query LangSmith cost lookup + CloudWatch metric publishing
+├── cost_lambda/
+│   └── handler.py              # Daily Lambda: Cost Explorer → InfraCostDaily CloudWatch metric
+├── tests/
+│   ├── conftest.py             # Test fixtures — mocked graph, fake env vars (no real API keys needed)
+│   ├── test_api.py             # API integration tests (auth, rate limiting, endpoints)
+│   └── test_nodes.py           # Unit tests for retrieval nodes
 ├── infra/                      # Terraform — all infrastructure as code
 │   ├── main.tf                 # Provider config and default tags
 │   ├── variables.tf            # Input variables
 │   ├── opensearch.tf           # OpenSearch Serverless + IAM role
 │   ├── ecr.tf                  # ECR repository + lifecycle policy
-│   ├── ecs.tf                  # ECS cluster + task definition + service
+│   ├── ecs.tf                  # ECS cluster + task definition + service + log group
 │   ├── networking.tf           # VPC + subnets + security groups + ALB
+│   ├── cost_lambda.tf           # Cost-tracker Lambda + EventBridge daily schedule + IAM
+│   ├── dashboard.tf            # CloudWatch Dashboard (cost/latency/volume by config, top users)
+│   ├── alarms.tf                # SNS topic + 3 CloudWatch alarms (cost/query, daily budget, anomaly)
 │   ├── outputs.tf              # Outputs: endpoints, URLs, ARNs
 │   ├── dev.tfvars              # Dev environment values (not committed)
 │   └── prod.tfvars             # Prod environment values (not committed)
 ├── .github/
 │   └── workflows/
-│       └── deploy.yml          # CI/CD: build → ECR → ECS on every push to master
+│       ├── deploy.yml             # CI/CD: tests → build → ECR → ECS on every push to master
+│       └── deploy-cost-lambda.yml # CI/CD: redeploys cost_lambda/handler.py on change
 ├── data/                       # Input markdown/mdx files (not committed)
 ├── output/                     # chunks_{strategy}.json + eval_{strategy}.json (not committed)
-├── Dockerfile                  # Online pipeline — starts uvicorn
+├── Dockerfile                  # Online pipeline — starts uvicorn, HEALTHCHECK for ECS
 ├── requirements.txt
+├── requirements-test.txt       # Test dependencies (pytest, httpx, etc.)
 ├── requirements-eval.txt       # Separate dependencies for RAGAS evaluation (isolated venv)
 ├── .env                        # Local secrets (not committed)
 ├── run_local.py                # Ingestion + evaluation locally (no OpenSearch needed)
 ├── run_upload.py               # Uploads chunks to OpenSearch Serverless
 ├── verify_upload.py            # Verifies index count, embeddings, and kNN query
 ├── delete_index.py             # Deletes the OpenSearch index (use when recreating mapping)
-├── create_secrets.py           # Pushes .env values to AWS Secrets Manager
+├── create_secrets.py           # Pushes .env values to AWS Secrets Manager (incl. API_KEY)
 ├── deploy_image.py             # Builds and pushes Docker image to ECR manually
 ├── evaluation/
 │   ├── create_langsmith_dataset.py # Creates synthetic dataset in LangSmith
@@ -178,7 +207,7 @@ Run these steps in order every time you recreate the infrastructure.
 aws sts get-caller-identity --query Arn --output text
 ```
 
-Edit `infra/dev.tfvars` and set `admin_iam_principal_arn` to your ARN.
+Edit `infra/dev.tfvars` and set `admin_iam_principal_arn` to your ARN. Also set `alert_email` (required, no default) — CloudWatch alarms send notifications there via SNS.
 
 ### Step 2 — Deploy infrastructure
 
@@ -188,7 +217,9 @@ terraform init
 terraform apply -var-file="dev.tfvars"
 ```
 
-Creates: OpenSearch Serverless, ECR, ECS cluster, VPC, ALB, IAM roles, CloudWatch logs.
+Creates: OpenSearch Serverless, ECR, ECS cluster, VPC, ALB, IAM roles, CloudWatch logs, the cost-tracker Lambda + daily EventBridge schedule, the CloudWatch Dashboard, and 3 CloudWatch alarms + SNS topic.
+
+AWS sends a confirmation email to `alert_email` for the SNS subscription — click the link or alarms won't notify you.
 
 Copy the outputs:
 
@@ -203,6 +234,8 @@ terraform output alb_url               # public API URL
 OPENSEARCH_ENDPOINT=xxxx.eu-west-1.aoss.amazonaws.com
 OPENSEARCH_INDEX=cloudrag-docs
 AWS_REGION=eu-west-1
+API_KEY=                # value clients must send as X-API-Key
+COHERE_API_KEY=          # required if RERANKING_ENABLED = True
 ```
 
 ### Step 4 — Push secrets to AWS Secrets Manager
@@ -211,6 +244,8 @@ AWS_REGION=eu-west-1
 # Run from local (not Docker) — needs AWS CLI credentials
 python create_secrets.py
 ```
+
+This pushes every key in `KEYS_TO_PUSH` (`create_secrets.py`), including `API_KEY`, to `cloudrag/*` secrets — Terraform's ECS task definition already references all of them.
 
 ### Step 5 — Upload chunks to OpenSearch
 
@@ -228,7 +263,8 @@ python run_local.py --docs-path ./data/
 ### Step 6 — Build and push Docker image to ECR
 
 ```bash
-# Run from local (not Docker)
+# Run from local (not Docker) — only needed for the very first deploy.
+# After that, every push to master rebuilds and redeploys via CI/CD.
 python deploy_image.py
 ```
 
@@ -240,8 +276,11 @@ curl http://<alb_url>/health
 
 curl -X POST http://<alb_url>/query \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: <your API_KEY value>" \
   -d '{"question": "What is context engineering?"}'
 ```
+
+Cost and latency per query show up within ~1-2 minutes at **CloudWatch → Dashboards → `cloudRAG-<environment>`**. The daily infra-cost panel needs the cost-tracker Lambda's first run (06:00 UTC) to populate.
 
 ### Tear down when not in use
 
@@ -250,18 +289,33 @@ cd infra/
 terraform destroy -var-file="dev.tfvars"
 ```
 
-Cost when running: ~$0.24/hour (OpenSearch) + ECS Fargate usage.
+This destroys everything Terraform tracks — including the OpenSearch collection (all indexed chunks are lost; re-run ingestion + upload after recreating). Cost when running: ~$0.24/hour (OpenSearch) + ECS Fargate usage.
 
 ---
 
 ## CI/CD
 
-On every push to `master` that modifies `retrieval/`, `config/`, `Dockerfile`, or `requirements.txt`, GitHub Actions automatically:
+There are two independent workflows:
 
-1. Builds the Docker image
-2. Pushes to ECR (tagged with commit SHA and `latest`)
-3. Triggers a rolling ECS deployment
-4. Waits for the service to stabilize
+### `deploy.yml` — application deploy
+
+On every push to `master` that modifies `retrieval/`, `config/`, `ingestion/`, `tests/`, `Dockerfile`, `requirements.txt`, or `requirements-test.txt`, GitHub Actions automatically:
+
+1. Runs the test suite (`pytest tests/`) — mocked graph, no real API keys needed, deploy is blocked if tests fail
+2. Builds the Docker image
+3. Pushes to ECR (tagged with commit SHA and `latest`)
+4. Triggers a rolling ECS deployment (`--force-new-deployment`)
+5. Waits for the service to stabilize
+
+### `deploy-cost-lambda.yml` — cost-tracker Lambda deploy
+
+On every push to `master` that modifies `cost_lambda/` (or manually via `workflow_dispatch`):
+
+1. Zips `cost_lambda/handler.py`
+2. Calls `aws lambda update-function-code`
+3. Waits for the update to complete
+
+Terraform creates the Lambda on first `apply`; this workflow only updates its code afterwards (`infra/cost_lambda.tf` has `ignore_changes = [filename, source_code_hash]` so a later `terraform apply` doesn't revert a CI/CD deploy).
 
 **Required GitHub secrets** (Settings → Secrets and variables → Actions):
 
@@ -269,11 +323,8 @@ On every push to `master` that modifies `retrieval/`, `config/`, `Dockerfile`, o
 |---|---|
 | `AWS_ACCESS_KEY_ID` | AWS access key |
 | `AWS_SECRET_ACCESS_KEY` | AWS secret key |
-| `AWS_REGION` | eu-west-1 |
-| `AWS_ACCOUNT_ID` | Your AWS account ID |
-| `OPENAI_API_KEY` | OpenAI API key |
-| `LANGCHAIN_API_KEY` | LangSmith API key |
-| `LANGCHAIN_ENDPOINT` | LangSmith endpoint |
+
+`AWS_REGION` and the ECR/ECS/Lambda names are hardcoded as workflow `env` values (not secrets) — update them there if you rename resources. Runtime secrets (`OPENAI_API_KEY`, `COHERE_API_KEY`, `LANGCHAIN_*`, `API_KEY`, etc.) live in AWS Secrets Manager (pushed via `create_secrets.py`), not in GitHub — the CI/CD pipeline never needs them since tests run fully mocked.
 
 The offline pipeline is never part of CI/CD — it always runs manually from local.
 
@@ -288,7 +339,7 @@ docker run --rm -p 8000:8000 --env-file .env \
   uvicorn retrieval.api:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-Open `http://localhost:8000/docs` for the interactive FastAPI UI.
+Open `http://localhost:8000/docs` for the interactive FastAPI UI — click **Authorize** and enter your `API_KEY` value to call `/query` from the browser.
 
 ---
 
@@ -483,6 +534,23 @@ Note: set `LANGCHAIN_TRACING_V2=true` (lowercase) in `.env` — uppercase `True`
 
 ---
 
+### Cost Tracking & Monitoring
+
+Two layers of CloudWatch metrics, both in the `cloudRAG/Costs` namespace:
+
+**Per-query (real-time)** — `monitoring/cost_tracking.py` runs in a background thread after every `/query` response (doesn't add latency). It looks up the query's LLM cost from its LangSmith trace (retrying a few times since LangSmith computes cost asynchronously) and publishes `QueryCount`, `LatencySeconds`, `CostPerQuery` — once with dimensions (`ConfigName`, `Model`) for the dashboard, once without dimensions for alarms (CloudWatch alarms don't support `SEARCH()`). `UserId` is intentionally **not** a CloudWatch dimension — high cardinality would blow up custom-metric cost — it's logged instead as a structured field and queried via Logs Insights.
+
+**Daily infra cost** — `cost_lambda/handler.py`, triggered by EventBridge at 06:00 UTC, reads AWS Cost Explorer for the previous day (filtered by the `Project=cloudRAG` tag, grouped by service) and publishes `InfraCostDaily`.
+
+**Dashboard** (`infra/dashboard.tf`, CloudWatch → Dashboards → `cloudRAG-<environment>`): avg cost/query by config, daily total LLM cost, cost by model, query volume by config, avg latency by config, combined infra+LLM cost, and two Logs Insights widgets (top users by cost / by query volume, parsed from the structured log line).
+
+**Alarms** (`infra/alarms.tf`, notify via SNS to `alert_email`):
+- `cost_per_query` — average cost per query exceeds `cost_per_query_threshold_usd` (default $0.01)
+- `daily_cost_budget` — total daily LLM cost exceeds `daily_cost_budget_usd` (default $5)
+- `cost_anomaly` — `CostPerQuery` deviates from its expected band (`anomaly_detection_std_devs`, default 2σ)
+
+---
+
 ## Environment Variables
 
 ```env
@@ -505,8 +573,12 @@ OPENAI_API_KEY=
 
 # Cohere (reranking)
 COHERE_API_KEY=
+
+# API
+API_KEY=                # required — value clients must send as X-API-Key
+RATE_LIMIT=10/minute     # optional, defaults to 10/minute
 ```
 
-Note on vector dimensions: local dev uses OpenAI text-embedding-3-small (1536 dims). Production uses Bedrock Titan v2 (1024 dims). Update `VECTOR_DIMENSION` in `run_upload.py` accordingly.
+Note on vector dimensions: embeddings use OpenAI text-embedding-3-small (1536 dims) in both dev and prod. If you switch to a different embedding model/provider, update `VECTOR_DIMENSION` in `run_upload.py` (and the index mapping) to match.
 
 In ECS, all variables are injected from AWS Secrets Manager — the application code does not change.
